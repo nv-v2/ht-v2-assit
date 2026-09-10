@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registro de asistencia</title>
+<style>
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: #f1f0ec;
+    margin: 0;
+    padding: 24px 12px;
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+    align-items: center;
+  }
+  .card {
+    background: #ffffff;
+    border-radius: 12px;
+    border: 1px solid #e0ded6;
+    padding: 28px 24px;
+    max-width: 380px;
+    width: 100%;
+  }
+  h1 { font-size: 19px; font-weight: 600; margin: 0 0 4px; text-align: center; }
+  .subtitle { font-size: 13px; color: #666; margin: 0 0 22px; text-align: center; }
+  label { font-size: 12px; color: #666; display: block; margin-bottom: 6px; }
+  #pinInput {
+    width: 100%;
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid #d6d3c9;
+    font-size: 28px;
+    letter-spacing: 12px;
+    text-align: center;
+    box-sizing: border-box;
+    margin-bottom: 16px;
+  }
+  #btnIngresar {
+    width: 100%;
+    padding: 14px;
+    border-radius: 8px;
+    border: none;
+    background: #2e2a24;
+    color: white;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #btnIngresar:hover { background: #46413a; }
+  #saludo { font-size: 16px; font-weight: 600; text-align: center; margin: 0 0 4px; }
+  #cambiarUsuario { display:block; text-align:center; font-size:12px; color:#888; margin-bottom:18px; cursor:pointer; text-decoration:underline; }
+  .botones { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .botones button {
+    padding: 16px 10px; border-radius: 8px; border: 1px solid #d6d3c9;
+    background: #f7f6f2; color: #2e2a24; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .botones button:hover:not(:disabled) { background: #ece9e1; }
+  .botones button:disabled { opacity: 0.45; cursor: default; }
+  .botones button.marcado { background: #e3f0e3; border-color: #a8cba8; color: #2e7d32; }
+  #error, #ok { font-size: 13px; margin: 16px 0 0; display: none; text-align: center; }
+  #error { color: #b3261e; }
+  #ok { color: #2e7d32; font-weight: 600; }
+  #estadoDia { font-size: 12px; color: #888; margin-top: 14px; text-align: center; min-height: 16px; }
+  .oculto { display: none; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div id="pantallaLogin">
+    <h1>Registro de asistencia</h1>
+    <p class="subtitle">Ingresa tu PIN de 4 dígitos.</p>
+    <label for="pinInput">PIN</label>
+    <input type="password" id="pinInput" inputmode="numeric" maxlength="6" placeholder="••••">
+    <button id="btnIngresar">Ingresar</button>
+    <p id="errorLogin" style="font-size:13px; color:#b3261e; margin:12px 0 0; display:none; text-align:center;"></p>
+  </div>
+
+  <div id="pantallaMarcaje" class="oculto">
+    <p id="saludo"></p>
+    <span id="cambiarUsuario">No soy yo, cambiar</span>
+    <div class="botones">
+      <button id="btnEntrada" data-campo="Entrada">Entrada</button>
+      <button id="btnColacion" data-campo="Colacion">Salida a colación</button>
+      <button id="btnIngreso" data-campo="Ingreso">Regreso colación</button>
+      <button id="btnSalida" data-campo="Salida">Salida</button>
+    </div>
+    <p id="error"></p>
+    <p id="ok">✓ Registrado correctamente</p>
+    <p id="estadoDia"></p>
+    <button id="btnForzarNueva" class="oculto" style="width:100%; margin-top:10px; background:#fff; border:1px solid #d6d3c9; color:#666; font-size:12px; padding:10px; border-radius:8px; cursor:pointer;">¿Jornada anterior quedó sin cerrar? Iniciar una nueva</button>
+  </div>
+</div>
+
+<script>
+// URL del script puente (Apps Script) publicado como aplicación web.
+// El token de Airtable vive DENTRO de ese script, nunca aquí.
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwKHLhZSZPTbUkmR3KgbOFUqJ1p87qnjX42zG43_JbxLY-5YlbW_XjJP-X4wawxMRos/exec";
+
+async function llamarScript(payload) {
+  const res = await fetch(SCRIPT_URL, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  return await res.json();
+}
+
+const pantallaLogin = document.getElementById("pantallaLogin");
+const pantallaMarcaje = document.getElementById("pantallaMarcaje");
+const pinInput = document.getElementById("pinInput");
+const btnIngresar = document.getElementById("btnIngresar");
+const errorLoginEl = document.getElementById("errorLogin");
+const saludoEl = document.getElementById("saludo");
+const cambiarUsuarioEl = document.getElementById("cambiarUsuario");
+const errorEl = document.getElementById("error");
+const okEl = document.getElementById("ok");
+const estadoEl = document.getElementById("estadoDia");
+const botones = document.querySelectorAll(".botones button");
+const btnForzarNueva = document.getElementById("btnForzarNueva");
+
+let operadorActual = null;
+let registroHoyId = null;
+let registroHoyFields = {};
+
+async function intentarLogin() {
+  const pin = pinInput.value.trim();
+  errorLoginEl.style.display = "none";
+  if (!pin) {
+    errorLoginEl.textContent = "Ingresa tu PIN.";
+    errorLoginEl.style.display = "block";
+    return;
+  }
+  btnIngresar.disabled = true;
+  btnIngresar.textContent = "Verificando...";
+  try {
+    const resp = await llamarScript({ accion: "login", pin: pin });
+    if (!resp.ok) {
+      errorLoginEl.textContent = resp.error || "PIN incorrecto.";
+      errorLoginEl.style.display = "block";
+      pinInput.value = "";
+      return;
+    }
+    operadorActual = resp.operador;
+    mostrarPantallaMarcaje();
+  } catch (err) {
+    errorLoginEl.textContent = "No se pudo verificar el PIN.";
+    errorLoginEl.style.display = "block";
+  } finally {
+    btnIngresar.disabled = false;
+    btnIngresar.textContent = "Ingresar";
+  }
+}
+
+btnIngresar.addEventListener("click", intentarLogin);
+pinInput.addEventListener("keydown", (e) => { if (e.key === "Enter") intentarLogin(); });
+
+function mostrarPantallaMarcaje() {
+  pantallaLogin.classList.add("oculto");
+  pantallaMarcaje.classList.remove("oculto");
+  saludoEl.textContent = "Hola, " + operadorActual;
+  pinInput.value = "";
+  buscarRegistroAbierto();
+}
+
+cambiarUsuarioEl.addEventListener("click", () => {
+  operadorActual = null;
+  registroHoyId = null;
+  registroHoyFields = {};
+  pantallaMarcaje.classList.add("oculto");
+  pantallaLogin.classList.remove("oculto");
+  pinInput.focus();
+});
+
+async function buscarRegistroAbierto() {
+  registroHoyId = null;
+  registroHoyFields = {};
+  botones.forEach(b => { b.classList.remove("marcado"); b.disabled = false; });
+  estadoEl.textContent = "Consultando tu estado...";
+  try {
+    const resp = await llamarScript({ accion: "consultarEstado", operador: operadorActual });
+    if (resp.ok) {
+      registroHoyId = resp.registroId;
+      registroHoyFields = resp.fields || {};
+    }
+    actualizarBotones();
+  } catch (err) {
+    estadoEl.textContent = "No se pudo consultar tu estado.";
+  }
+}
+
+function actualizarBotones() {
+  const campos = ["Entrada", "Colacion", "Ingreso", "Salida"];
+  let siguiente = null;
+  campos.forEach(campo => {
+    const btn = document.querySelector('button[data-campo="' + campo + '"]');
+    if (registroHoyFields[campo]) {
+      btn.classList.add("marcado"); btn.disabled = true;
+    } else {
+      btn.classList.remove("marcado");
+      if (siguiente === null) siguiente = campo;
+    }
+  });
+  campos.forEach(campo => {
+    const btn = document.querySelector('button[data-campo="' + campo + '"]');
+    if (!registroHoyFields[campo]) btn.disabled = (campo !== siguiente);
+  });
+  if (siguiente === null) {
+    estadoEl.textContent = "Tu jornada anterior está completa. Puedes iniciar una nueva.";
+    btnForzarNueva.classList.add("oculto");
+  } else if (registroHoyId) {
+    btnForzarNueva.classList.remove("oculto");
+  } else {
+    btnForzarNueva.classList.add("oculto");
+  }
+}
+
+btnForzarNueva.addEventListener("click", () => {
+  const ok = confirm("Esto dejará la jornada anterior tal como está (sin cerrar) y empezará una nueva desde 'Entrada'. ¿Confirmas?");
+  if (!ok) return;
+  registroHoyId = null;
+  registroHoyFields = {};
+  actualizarBotones();
+  estadoEl.textContent = "Nueva jornada lista. Marca tu Entrada.";
+});
+
+botones.forEach(btn => {
+  btn.addEventListener("click", async () => {
+    errorEl.style.display = "none";
+    okEl.style.display = "none";
+    const campo = btn.dataset.campo;
+    btn.disabled = true;
+    const textoOriginal = btn.textContent;
+    btn.textContent = "Registrando...";
+    try {
+      const resp = await llamarScript({
+        accion: "marcar",
+        operador: operadorActual,
+        campo: campo,
+        registroId: registroHoyId
+      });
+      if (!resp.ok) throw new Error(resp.error || "Error desconocido");
+      registroHoyId = resp.registroId;
+      registroHoyFields = resp.fields;
+      okEl.style.display = "block";
+      actualizarBotones();
+    } catch (err) {
+      errorEl.textContent = "No se pudo registrar: " + err.message;
+      errorEl.style.display = "block";
+      btn.disabled = false;
+    } finally {
+      btn.textContent = textoOriginal;
+    }
+  });
+});
+</script>
+
+</body>
+</html>
